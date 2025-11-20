@@ -1,6 +1,6 @@
-
-import React, { useState, useCallback } from 'react';
-import { Play, RotateCcw, Trophy, X, ArrowRight, AlertCircle, Calculator, Clock } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Play, RotateCcw, Trophy, X, ArrowRight, AlertCircle, Calculator, Clock, Loader } from 'lucide-react';
+import { GoogleGenAI, Modality } from "@google/genai";
 import { GameState, OperationType, GameConfig, Question, SessionStats } from './types';
 import { generateQuestionBatch } from './services/gameService';
 import { playCorrectSound, playWrongSound, playCompletionSound } from './services/soundService';
@@ -29,6 +29,9 @@ export default function App() {
     averageTimePerQuestion: 0
   });
 
+  const [rewardImage, setRewardImage] = useState<string | null>(null);
+  const [isRewardLoading, setIsRewardLoading] = useState(false);
+
   // --- Handlers: Setup ---
 
   const startGame = (customQueue?: Question[]) => {
@@ -47,9 +50,8 @@ export default function App() {
     });
     setGameState(GameState.PLAYING);
     
-    // Initialize audio context on user interaction (start game)
-    // This ensures sounds play on mobile browsers
-    playCorrectSound(); // Play a silent/quick sound or just init context logic inside service if needed, but here specific sounds are event based.
+    // Initialize audio context on user interaction
+    playCorrectSound(); 
   };
 
   const selectOperation = (op: OperationType) => setConfig(prev => ({ ...prev, operation: op }));
@@ -92,6 +94,7 @@ export default function App() {
 
   const processAnswer = useCallback((userVal: number | null, isTimeout: boolean) => {
     const currentQ = questionQueue[currentQIndex];
+    if (!currentQ) return;
     
     // If timeout, ensure we mark it as such
     const valToCheck = userVal !== null ? userVal : -999; // -999 is just a dummy for timeout
@@ -167,6 +170,48 @@ export default function App() {
           startGame(wrongQuestions);
       }
   };
+
+  const generateReward = async () => {
+    if (!process.env.API_KEY) return;
+    setIsRewardLoading(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [
+            {
+              text: 'A cute 3D cartoon robot holding a golden trophy cup, jumping for joy, vibrant colors, soft lighting, simple background',
+            },
+          ],
+        },
+        config: {
+          responseModalities: [Modality.IMAGE],
+        },
+      });
+
+      for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+          const base64ImageBytes: string = part.inlineData.data;
+          const imageUrl = `data:image/png;base64,${base64ImageBytes}`;
+          setRewardImage(imageUrl);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to generate reward", error);
+    } finally {
+      setIsRewardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (gameState === GameState.RESULTS && sessionStats.wrongCount === 0) {
+      generateReward();
+    } else if (gameState !== GameState.RESULTS) {
+      setRewardImage(null);
+      setIsRewardLoading(false);
+    }
+  }, [gameState, sessionStats.wrongCount]);
 
   // --- Styles Helper ---
   const getOperationButtonStyle = (op: OperationType, isSelected: boolean) => {
@@ -298,6 +343,9 @@ export default function App() {
 
   if (gameState === GameState.PLAYING) {
     const currentQ = questionQueue[currentQIndex];
+    // Safety check to prevent crash if queue is somehow empty
+    if (!currentQ) return null; 
+
     const progress = ((currentQIndex) / questionQueue.length) * 100;
 
     // Determine context text
@@ -305,7 +353,7 @@ export default function App() {
     if (config.targetNumber) contextText = `Tabuada do ${config.targetNumber}`;
 
     return (
-      <div className="h-screen bg-slate-50 flex flex-col max-w-md mx-auto relative overflow-hidden font-sans">
+      <div className="h-full bg-slate-50 flex flex-col max-w-md mx-auto relative overflow-hidden font-sans">
         
         {/* Header */}
         <div className="flex justify-between items-center px-6 pt-6 pb-2">
@@ -480,13 +528,27 @@ export default function App() {
                 </>
             ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-center">
-                     <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-3">
-                        <Play className="text-indigo-500 ml-1" size={28} />
-                     </div>
-                     <p className="text-slate-800 font-bold text-lg mb-1">Prêmio da IA</p>
-                     <p className="text-slate-400 text-sm max-w-[200px]">
-                         Continue praticando para manter sua mente afiada!
-                     </p>
+                     {isRewardLoading ? (
+                       <div className="flex flex-col items-center">
+                         <Loader className="animate-spin text-indigo-500 mb-2" size={32} />
+                         <p className="text-slate-400 text-xs">Gerando prêmio...</p>
+                       </div>
+                     ) : rewardImage ? (
+                       <div className="w-full h-full flex flex-col items-center animate-in fade-in duration-700">
+                          <img src={rewardImage} alt="Reward" className="w-40 h-40 object-contain rounded-lg mb-2 shadow-sm" />
+                          <p className="text-indigo-600 font-bold text-sm">Parabéns!</p>
+                       </div>
+                     ) : (
+                        <>
+                          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-3">
+                              <Play className="text-indigo-500 ml-1" size={28} />
+                          </div>
+                          <p className="text-slate-800 font-bold text-lg mb-1">Prêmio da IA</p>
+                          <p className="text-slate-400 text-sm max-w-[200px]">
+                              Continue praticando para manter sua mente afiada!
+                          </p>
+                        </>
+                     )}
                 </div>
             )}
         </div>
