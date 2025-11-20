@@ -1,0 +1,5 @@
+{
+  "name": "Tabuada Game",
+  "description": "An interactive, mobile-first math practice app using spaced repetition to help mastery of multiplication tables and other operations.",
+  "requestFramePermissions": []
+}
